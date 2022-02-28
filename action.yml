@@ -1,0 +1,134 @@
+name: 'action-judger'
+description: 'judge your Issue or PR interactively.'
+
+inputs:
+  script:
+    description: 'Your script'
+    required: true
+  welcomeText:
+    description: 'Welcome the user'
+    required: false
+    default: "👋 Thanks for submitting! Your answer is testing by CI. Click [here](${JOB_URL}) to see more information."
+  waText:
+    description: 'Sorry for the user'
+    required: false
+    default: "😭 Sorry! There is something wrong with your answer. Click [here](${JOB_URL}) to see more information."
+  acText:
+    description: 'Congratulate for the user'
+    required: false
+    default: "🎉 Congratulations! Your answer passed the CI testing!"
+  addLabelAfterJudging:
+    description: 'Add is:answer label after judging'
+    required: false
+    default: "true"
+  setClosedAfterJudging:
+    description: 'Close the issue after judging'
+    required: false
+    default: "true"
+  setLockedAfterJudging:
+    description: 'Lock the issue after judging'
+    required: false
+    default: "true"
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get the URL of current Github Action Job
+      id: get-job-url
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const resp = await github.rest.actions.listJobsForWorkflowRun({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            run_id: context.runId,
+          })
+          return resp.data.jobs[0].html_url
+        result-encoding: string
+
+    - name: Pre-report your test
+      uses: actions/github-script@v6
+      env:
+        ACTION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        JOB_URL: ${{ steps.get-job-url.outputs.result }}
+      with:
+        script: |
+          const { ACTION_URL, JOB_URL } = process.env
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `${{ inputs.welcomeText }}`,
+          })
+
+    - name: Check your answer
+      id: check-answer
+      shell: bash
+      run: |
+        ${{ inputs.script }}
+
+    - name: Wrong Answer
+      uses: actions/github-script@v6
+      if: ${{ failure() }}
+      env:
+        ACTION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        JOB_URL: ${{ steps.get-job-url.outputs.result }}
+      with:
+        script: |
+          const { ACTION_URL, JOB_URL } = process.env
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `${{ inputs.waText }}`,
+          })
+
+    - name: Accepted
+      uses: actions/github-script@v6
+      if: ${{ success() }}
+      env:
+        ACTION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        JOB_URL: ${{ steps.get-job-url.outputs.result }}
+      with:
+        script: |
+          const { ACTION_URL, JOB_URL } = process.env
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `${{ inputs.acText }}`,
+          })
+
+          if (`${{ inputs.addLabelAfterJudging }} == 'true'`) {
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['is:answer'],
+            })
+          }
+
+    - name: Close the issue
+      uses: actions/github-script@v6
+      if: ${{ success() || failure() }}
+      with:
+        script: |
+          if (`${{ inputs.setClosedAfterJudging }} == 'true'`) {
+            github.rest.issues.update({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+            })
+          }
+
+          if (`${{ inputs.setLockedAfterJudging }} == 'true'`) {
+            github.rest.issues.lock({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+          }
